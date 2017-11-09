@@ -1,15 +1,7 @@
 # coding: utf-8
 
-# # Assignment 3:  Recommendation systems
-#
-# Here we'll implement a content-based recommendation algorithm.
-# It will use the list of genres for a movie as the content.
-# The data come from the MovieLens project: http://grouplens.org/datasets/movielens/
-# Note that I have not provided many doctests for this one. I strongly
-# recommend that you write your own for each function to ensure your
-# implementation is correct.
+# In[2]:
 
-# Please only use these imports.
 from collections import Counter, defaultdict
 import math
 import numpy as np
@@ -37,51 +29,65 @@ def tokenize_string(my_string):
 
 
 def tokenize(movies):
-    """
-    Append a new column to the movies DataFrame with header 'tokens'.
-    This will contain a list of strings, one per token, extracted
-    from the 'genre' field of each movie. Use the tokenize_string method above.
-
-    Note: you may modify the movies parameter directly; no need to make
-    a new copy.
-    Params:
-      movies...The movies DataFrame
-    Returns:
-      The movies DataFrame, augmented to include a new column called 'tokens'.
-
-    >>> movies = pd.DataFrame([[123, 'Horror|Romance'], [456, 'Sci-Fi']], columns=['movieId', 'genres'])
-    >>> movies = tokenize(movies)
-    >>> movies['tokens'].tolist()
-    [['horror', 'romance'], ['sci-fi']]
-    """
-    ###TODO
-    pass
+    listTokens = []
+    for genre in movies['genres']:
+        listTokens.append(tokenize_string(genre))
+    
+    movies['tokens'] = pd.Series(listTokens, index = movies.index)
+    #print(movies['tokens'].tolist())
+    return movies
 
 
 def featurize(movies):
-    """
-    Append a new column to the movies DataFrame with header 'features'.
-    Each row will contain a csr_matrix of shape (1, num_features). Each
-    entry in this matrix will contain the tf-idf value of the term, as
-    defined in class:
-    tfidf(i, d) := tf(i, d) / max_k tf(k, d) * log10(N/df(i))
-    where:
-    i is a term
-    d is a document (movie)
-    tf(i, d) is the frequency of term i in document d
-    max_k tf(k, d) is the maximum frequency of any term in document d
-    N is the number of documents (movies)
-    df(i) is the number of unique documents containing term i
-
-    Params:
-      movies...The movies DataFrame
-    Returns:
-      A tuple containing:
-      - The movies DataFrame, which has been modified to include a column named 'features'.
-      - The vocab, a dict from term to int. Make sure the vocab is sorted alphabetically as in a2 (e.g., {'aardvark': 0, 'boy': 1, ...})
-    """
-    ###TODO
-    pass
+    vocab = {}    
+    listVocab = []
+    for tok in movies['tokens']:
+        for t in tok:
+            listVocab.append(t)
+    
+    uniqueGenres = set(listVocab)    
+    counter = 0
+    uniqueGenres = sorted(uniqueGenres)
+    for genres in uniqueGenres:
+        vocab[genres] = counter
+        counter += 1
+    uniqueDocs = {}
+    for toks in movies['tokens']:
+        flag = {}
+        for t in toks:
+            flag[t] = True
+        for t in toks:
+            if t in uniqueDocs.keys() and flag:
+                uniqueDocs[t] += 1
+            else:
+                uniqueDocs[t] = 1
+                flag[t] = False   
+    numMovies = len(movies)
+    num_features = len(vocab)
+    listFeatures = []
+    for toks in movies['tokens']:
+        tokenFreq = {}
+        for t in toks:
+            if t in tokenFreq.keys():
+                tokenFreq[t] += 1
+            else:
+                tokenFreq[t] = 1
+        row = []
+        column = []
+        data = []
+        maxFreq = tokenFreq[max(tokenFreq)]
+        for key, values in tokenFreq.items():
+            temp1 = values/maxFreq
+            temp2 = np.log10(numMovies/uniqueDocs[key])
+            data.append(temp1 * temp2)
+            row.append(0)
+            column.append(vocab[key])
+        listFeatures.append(csr_matrix((data, (row, column)), shape=(1, num_features)).toarray())
+    
+    movies['features'] = pd.Series(listFeatures, index = movies.index)
+    return movies, vocab
+        
+    
 
 
 def train_test_split(ratings):
@@ -95,46 +101,50 @@ def train_test_split(ratings):
 
 
 def cosine_sim(a, b):
-    """
-    Compute the cosine similarity between two 1-d csr_matrices.
-    Each matrix represents the tf-idf feature vector of a movie.
-    Params:
-      a...A csr_matrix with shape (1, number_features)
-      b...A csr_matrix with shape (1, number_features)
-    Returns:
-      The cosine similarity, defined as: dot(a, b) / ||a|| * ||b||
-      where ||a|| indicates the Euclidean norm (aka L2 norm) of vector a.
-    """
-    ###TODO
-    pass
+    a = np.array(a)
+    b = np.array(b)
+    temp = a.dot(b.T)    
+    normA = 0.0
+    for x in a[0]:
+        normA += x*x
+    norm1 = np.sqrt(normA)
+    normB = 0.00    
+    for y in b[0]:
+        normB += y*y
+    norm2 = np.sqrt(normB)   
+    norm = norm1 * norm2
+    cosine_sim = temp[0][0]/norm
+    return cosine_sim
 
 
 def make_predictions(movies, ratings_train, ratings_test):
-    """
-    Using the ratings in ratings_train, predict the ratings for each
-    row in ratings_test.
-
-    To predict the rating of user u for movie i: Compute the weighted average
-    rating for every other movie that u has rated.  Restrict this weighted
-    average to movies that have a positive cosine similarity with movie
-    i. The weight for movie m corresponds to the cosine similarity between m
-    and i.
-
-    If there are no other movies with positive cosine similarity to use in the
-    prediction, use the mean rating of the target user in ratings_train as the
-    prediction.
-
-    Params:
-      movies..........The movies DataFrame.
-      ratings_train...The subset of ratings used for making predictions. These are the "historical" data.
-      ratings_test....The subset of ratings that need to predicted. These are the "future" data.
-    Returns:
-      A numpy array containing one predicted rating for each element of ratings_test.
-    """
-    ###TODO
-    pass
-
-
+    predList = []
+    for i in range(len(ratings_test)):
+        movieIdTest = ratings_test['movieId'].iloc[i]
+        userTest = ratings_test['userId'].iloc[i]
+        ratings = ratings_train[ratings_train.userId == userTest]
+        movieIdTrain = ratings_train[ratings_train.userId == userTest].movieId        
+        wSum = 0.00
+        wValue = 0.00
+        for movieB in movieIdTrain:
+            A = movies[movies.movieId == movieIdTest].features.iloc[0]
+            B = movies[movies.movieId == movieB].features.iloc[0]
+            rating = ratings[ratings_train.movieId == movieB].rating.iloc[0]            
+            weighted = cosine_sim(A, B)                
+            if(weighted > 0.00):
+                wValue += weighted * rating
+                wSum += weighted
+            else:
+                wValue += 0.00
+                wSum += 0.00       
+        if(wSum <= 0.00):
+            wAvg = sum(ratings.rating)/len(ratings)
+        else:
+            wAvg = wValue/wSum
+        predList.append(wAvg)
+    predArray = np.array(predList)
+    return predArray
+                
 def mean_absolute_error(predictions, ratings_test):
     """DONE.
     Return the mean absolute error of the predictions.
@@ -160,3 +170,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
